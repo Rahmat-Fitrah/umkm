@@ -351,8 +351,8 @@ st.write("")
 # ----------------------------------------------------------------------------
 # TABS
 # ----------------------------------------------------------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📊 Ringkasan", "🗂️ Sebaran Usaha", "💰 Kinerja Keuangan", "👥 Tenaga Kerja", "📋 Jelajahi Data"]
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+    ["📊 Ringkasan", "🗂️ Sebaran Usaha", "💰 Kinerja Keuangan", "👥 Tenaga Kerja", "📋 Jelajahi Data", "🤖 Prediksi KNN"]
 )
 
 # ---- TAB 1: RINGKASAN ----
@@ -585,7 +585,209 @@ melalui tombol di atas.
 # ----------------------------------------------------------------------------
 st.markdown(
     f"<div style='text-align:center; color:{MUTED}; font-size:12px; padding: 18px 0 6px 0;'>"
-    "Dibuat dengan Streamlit · Sumber data: Kaggle — dataset-untuk-umkm (dhearahmadianti)"
+    "Dibuat dengan Streamlit · Model KNN (k=9) · Sumber data: Kaggle — dataset-untuk-umkm (dhearahmadianti)"
     "</div>",
     unsafe_allow_html=True,
 )
+
+# ============================================================
+# TAB 6: PREDIKSI KNN
+# ============================================================
+with tab6:
+    import joblib
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.preprocessing import LabelEncoder, StandardScaler
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+
+    st.markdown("""
+    <div class='hero'>
+        <div class='hero-eyebrow'>MACHINE LEARNING · K-NEAREST NEIGHBOR</div>
+        <h1>Prediksi Status Legalitas UMKM</h1>
+        <p>Masukkan data usaha di bawah ini untuk memprediksi apakah usaha tersebut <b>Terdaftar</b> atau <b>Belum Terdaftar</b> secara legal, menggunakan model K-Nearest Neighbor (k=9) yang telah dilatih dari dataset UMKM.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ---- TRAIN MODEL (cached) ----
+    @st.cache_resource
+    def train_knn_model(df_raw):
+        df_model = df_raw.copy()
+        df_model = df_model.replace('unknown', np.nan)
+        num_cols = ['tenaga_kerja_perempuan', 'tenaga_kerja_laki_laki', 'aset', 'omset',
+                    'kapasitas_produksi', 'tahun_berdiri', 'laba', 'biaya_karyawan', 'jumlah_pelanggan']
+        for c in num_cols:
+            df_model[c] = pd.to_numeric(df_model[c], errors='coerce')
+        df_model = df_model.dropna(subset=['status_legalitas'] + num_cols + ['jenis_usaha', 'marketplace'])
+
+        feature_cols = ['jenis_usaha', 'tenaga_kerja_perempuan', 'tenaga_kerja_laki_laki',
+                        'aset', 'omset', 'marketplace', 'kapasitas_produksi',
+                        'tahun_berdiri', 'laba', 'biaya_karyawan', 'jumlah_pelanggan']
+        X = df_model[feature_cols].copy()
+        y = df_model['status_legalitas'].copy()
+
+        le_jenis = LabelEncoder()
+        le_market = LabelEncoder()
+        le_target = LabelEncoder()
+
+        X['jenis_usaha'] = le_jenis.fit_transform(X['jenis_usaha'])
+        X['marketplace'] = le_market.fit_transform(X['marketplace'])
+        y_enc = le_target.fit_transform(y)
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y_enc, test_size=0.2, random_state=42, stratify=y_enc)
+
+        scaler = StandardScaler()
+        num_features = ['tenaga_kerja_perempuan', 'tenaga_kerja_laki_laki', 'aset', 'omset',
+                        'kapasitas_produksi', 'tahun_berdiri', 'laba', 'biaya_karyawan', 'jumlah_pelanggan']
+        X_train_s = X_train.copy()
+        X_test_s = X_test.copy()
+        X_train_s[num_features] = scaler.fit_transform(X_train[num_features])
+        X_test_s[num_features] = scaler.transform(X_test[num_features])
+
+        knn = KNeighborsClassifier(n_neighbors=9)
+        knn.fit(X_train_s, y_train)
+        y_pred = knn.predict(X_test_s)
+
+        metrics = {
+            'accuracy':  round(accuracy_score(y_test, y_pred) * 100, 2),
+            'precision': round(precision_score(y_test, y_pred) * 100, 2),
+            'recall':    round(recall_score(y_test, y_pred) * 100, 2),
+            'f1':        round(f1_score(y_test, y_pred) * 100, 2),
+            'cm':        confusion_matrix(y_test, y_pred),
+        }
+        return knn, scaler, le_jenis, le_market, le_target, feature_cols, num_features, metrics
+
+    knn_model, scaler, le_jenis, le_market, le_target, feature_cols, num_features, metrics = train_knn_model(df_raw)
+
+    # ---- METRIK MODEL ----
+    st.markdown("<div class='section-tag'>Performa Model KNN (k=9) — Data Uji 20%</div>", unsafe_allow_html=True)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Accuracy",  f"{metrics['accuracy']}%")
+    m2.metric("Precision", f"{metrics['precision']}%")
+    m3.metric("Recall",    f"{metrics['recall']}%")
+    m4.metric("F1-Score",  f"{metrics['f1']}%")
+
+    with st.expander("📊 Lihat Confusion Matrix"):
+        cm = metrics['cm']
+        fig_cm = go.Figure(data=go.Heatmap(
+            z=cm,
+            x=['Pred: Belum Terdaftar', 'Pred: Terdaftar'],
+            y=['Aktual: Belum Terdaftar', 'Aktual: Terdaftar'],
+            colorscale=[[0, '#F5F6FA'], [1, INDIGO]],
+            text=cm, texttemplate="%{text}",
+            showscale=False,
+        ))
+        fig_cm.update_layout(
+            title="Confusion Matrix Model KNN (k=9)",
+            xaxis_title="Prediksi", yaxis_title="Aktual",
+            height=320,
+        )
+        st.plotly_chart(style_fig(fig_cm), use_container_width=True)
+
+    st.divider()
+
+    # ---- FORM PREDIKSI ----
+    st.markdown("<div class='section-tag'>Form Prediksi Status Legalitas</div>", unsafe_allow_html=True)
+    st.info("💡 Isi semua kolom di bawah ini, lalu klik **Prediksi Sekarang** untuk mendapatkan hasil klasifikasi.")
+
+    with st.form("form_prediksi"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            input_jenis = st.selectbox("Jenis Usaha", sorted(le_jenis.classes_))
+            input_marketplace = st.selectbox("Marketplace / Kanal Pemasaran", sorted(le_market.classes_))
+            input_tahun = st.number_input("Tahun Berdiri", min_value=1980, max_value=2026, value=2015, step=1)
+            input_kapasitas = st.number_input("Kapasitas Produksi", min_value=0, value=300, step=10)
+        with col2:
+            input_aset = st.number_input("Aset (Rp)", min_value=0, value=5_000_000, step=500_000, format="%d")
+            input_omset = st.number_input("Omset (Rp)", min_value=0, value=20_000_000, step=1_000_000, format="%d")
+            input_laba = st.number_input("Laba (Rp)", min_value=-100_000_000, value=5_000_000, step=500_000, format="%d")
+            input_biaya = st.number_input("Biaya Karyawan (Rp)", min_value=0, value=10_000_000, step=500_000, format="%d")
+        with col3:
+            input_tk_p = st.number_input("Tenaga Kerja Perempuan", min_value=0, value=5, step=1)
+            input_tk_l = st.number_input("Tenaga Kerja Laki-laki", min_value=0, value=5, step=1)
+            input_pelanggan = st.number_input("Jumlah Pelanggan", min_value=0, value=100, step=10)
+
+        submitted = st.form_submit_button("🔍 Prediksi Sekarang", use_container_width=True, type="primary")
+
+    if submitted:
+        try:
+            jenis_enc    = le_jenis.transform([input_jenis])[0]
+            market_enc   = le_market.transform([input_marketplace])[0]
+
+            input_data = pd.DataFrame([{
+                'jenis_usaha':            jenis_enc,
+                'tenaga_kerja_perempuan': input_tk_p,
+                'tenaga_kerja_laki_laki': input_tk_l,
+                'aset':                   input_aset,
+                'omset':                  input_omset,
+                'marketplace':            market_enc,
+                'kapasitas_produksi':     input_kapasitas,
+                'tahun_berdiri':          input_tahun,
+                'laba':                   input_laba,
+                'biaya_karyawan':         input_biaya,
+                'jumlah_pelanggan':       input_pelanggan,
+            }])
+
+            input_scaled = input_data.copy()
+            input_scaled[num_features] = scaler.transform(input_data[num_features])
+
+            pred_enc  = knn_model.predict(input_scaled)[0]
+            pred_prob = knn_model.predict_proba(input_scaled)[0]
+            pred_label = le_target.inverse_transform([pred_enc])[0]
+            confidence = round(max(pred_prob) * 100, 1)
+
+            st.divider()
+            st.markdown("<div class='section-tag'>Hasil Prediksi</div>", unsafe_allow_html=True)
+
+            if pred_label == "Terdaftar":
+                st.success(f"### ✅ TERDAFTAR  —  Kepercayaan: {confidence}%")
+                st.markdown(f"""
+                Berdasarkan data yang dimasukkan, model KNN (k=9) memprediksi bahwa usaha ini
+                **kemungkinan sudah terdaftar secara legal**. Usaha dengan profil ini umumnya
+                memiliki akses lebih baik terhadap pembiayaan formal dan program pemerintah.
+                """)
+            else:
+                st.warning(f"### ⚠️ BELUM TERDAFTAR  —  Kepercayaan: {confidence}%")
+                st.markdown(f"""
+                Berdasarkan data yang dimasukkan, model KNN (k=9) memprediksi bahwa usaha ini
+                **kemungkinan belum terdaftar secara legal**. Disarankan untuk segera mengurus
+                perizinan usaha melalui OSS (Online Single Submission) di oss.go.id.
+                """)
+
+            c1, c2 = st.columns(2)
+            with c1:
+                prob_df = pd.DataFrame({
+                    'Status': le_target.classes_,
+                    'Probabilitas': [round(p * 100, 1) for p in pred_prob]
+                })
+                fig_prob = px.bar(
+                    prob_df, x='Status', y='Probabilitas',
+                    color='Status',
+                    color_discrete_sequence=[TERRACOTTA, SAGE],
+                    title='Probabilitas Prediksi (%)',
+                    text='Probabilitas',
+                )
+                fig_prob.update_traces(texttemplate='%{text}%', textposition='outside')
+                fig_prob.update_layout(showlegend=False, yaxis_range=[0, 110])
+                st.plotly_chart(style_fig(fig_prob), use_container_width=True)
+            with c2:
+                st.markdown("**Ringkasan Input Data:**")
+                summary = {
+                    "Jenis Usaha": input_jenis,
+                    "Marketplace": input_marketplace,
+                    "Tahun Berdiri": input_tahun,
+                    "Aset": f"Rp {input_aset:,.0f}",
+                    "Omset": f"Rp {input_omset:,.0f}",
+                    "Laba": f"Rp {input_laba:,.0f}",
+                    "Biaya Karyawan": f"Rp {input_biaya:,.0f}",
+                    "Tenaga Kerja": f"{input_tk_p + input_tk_l} orang",
+                    "Jumlah Pelanggan": input_pelanggan,
+                }
+                for k, v in summary.items():
+                    st.markdown(f"- **{k}**: {v}")
+
+        except Exception as e:
+            st.error(f"Terjadi kesalahan saat prediksi: {e}")
+
+    st.divider()
+    st.caption("⚠️ Catatan: Model KNN ini menghasilkan akurasi ~50% karena fitur finansial yang tersedia belum cukup kuat untuk memprediksi status legalitas secara akurat. Hasil prediksi bersifat indikatif dan tidak menggantikan verifikasi resmi.")
