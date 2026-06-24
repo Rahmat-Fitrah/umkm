@@ -594,7 +594,6 @@ st.markdown(
 # TAB 6: PREDIKSI KNN
 # ============================================================
 with tab6:
-    import joblib
     from sklearn.neighbors import KNeighborsClassifier
     from sklearn.preprocessing import LabelEncoder, StandardScaler
     from sklearn.model_selection import train_test_split
